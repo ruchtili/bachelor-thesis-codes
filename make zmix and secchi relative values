@@ -1,0 +1,29 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        make zmix and secchi depth relative to be comparable
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(readr)
+library(dplyr)
+
+df <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_data_w_manual_typology.csv"
+data <- read_csv(df, show_col_types = FALSE)
+
+data_rel <- data %>%
+  mutate(
+    zmix_rel   = (zmix / depth) * 100,
+    secchi_rel = (secchi_depth / depth) * 100
+  )
+
+#qc test:
+data_rel %>%
+  select(name, year, depth, zmix, zmix_rel, secchi_depth, secchi_rel) %>%
+  head()
+
+#save it (first so and second with NA control)
+write_csv(data_rel, "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/dataframe_rel_wNA.csv")
+
+
+#okay but some have secchi above 100% -> chekc with raw data works out though, measuring mistake maybe
