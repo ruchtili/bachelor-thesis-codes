@@ -1,0 +1,403 @@
+# ----------------------------------------------------------
+# Script Name:    metab_modeling.R
+# Purpose:        metab modeling, wavelet, build df_full which will then become complete_df
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+#
+
+library(LakeMetabolizer)
+library(rLakeAnalyzer)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(rprojroot)
+library(tidyr)
+library(lubridate)
+library(tidyr)
+library(WaveletComp)
+
+load("C:/Users/linda/Documents/Bachelorarbeit/Marie/specification_lakes.RData")  
+df <- specification_lakes
+
+#install.packages("Matrix", dependencies = TRUE)
+#install.packages("car", dependencies = TRUE)
+#install.packages("ggpubr")
+library(ggpubr)
+
+root.dir = "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting"
+input_folder = paste0(root.dir, "/new_per_lake_per_year")
+output_folder = paste0(root.dir, "/new_modeling")
+
+setwd(root.dir)
+
+# generate the list of files
+data <- list.files(path = input_folder, pattern = "\\.csv$", full.names = TRUE)
+# !!!! make sure there are DO data for the summer.... if not, remove the file from the folder (ex ANT 2015)
+
+# Evaluate the depths for Temp measurements for each lake and year (adjusted to new date format)
+for (i in 1:length(data)) {
+  daten <- read.csv(data[i])
+  
+  #changed to new date format and then POsixct
+  if("date_time" %in% names(daten)){
+    daten$datetime <- as.POSIXct(daten$date_time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  } else if(all(c("dt_ana","hr_ana") %in% names(daten))){
+    daten$datetime <- as.POSIXct(paste(daten$dt_ana, daten$hr_ana), format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  } else {
+    stop("Mistake at the datetime step ", basename(data[i]))
+  }
+  
+  #figures out all depths for temp sensors, works until here, good
+  temp_spalten <- grep("^TmpWtr_degC_d[0-9.]+$", names(daten), value = TRUE)
+  depths <- as.numeric(gsub("TmpWtr_degC_d", "", temp_spalten))
+  
+  cat(basename(data[i]), "-> Depths[m]:", paste(depths, collapse = ", "), "\n")
+}
+
+###
+# Select the files with DO data in summer 
+# Includes sorting in all files those with adequate DO data
+
+number_DO_data_in_files <- c()
+
+for (i in 1:length(data)) {
+  daten <- read.csv(data[i])
+  
+  daten$datetime <- as.POSIXct(daten$date_time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  
+  #just July and August
+  daten <- daten[format(daten$datetime, "%m") %in% c("07", "08"), ]
+  
+  #DO data availability
+  tryCatch({
+    #find all DO columns
+    do_cols <- grep("^DO_mgl_d[0-9.]+$", names(daten), value = TRUE)
+    if(length(do_cols) == 0) stop("mistake at finding DO depths")
+    
+    depths2 <- as.numeric(gsub("DO_mgl_d", "", do_cols))
+    max_depth_do <- do_cols[which.max(depths2)]
+    
+    daten <- daten %>% filter(!is.na(.data[[max_depth_do]]))
+    number_DO_data_in_files[i] <- nrow(daten)
+  }, 
+  error = function(e) {
+    message("no DO data ", i, ": ", e$message)
+    # continue even if mistake
+  }) 
+}
+
+# Files to select are those for which there is more than 100 DO data over the summer
+files_to_select <- which(number_DO_data_in_files >= 100)
+
+
+#yesssss, seems to work again, now.... modeling
+# Loop through the selected files and compute daily metabolism
+metab_results_list <- list() # Initialize an empty list to store results
+
+for (i in files_to_select) {
+  daten <- read.csv(data[i])
+  
+  # Use the new date_time column
+  daten$datetime <- as.POSIXct(daten$date_time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  
+  #summer months
+  daten_summer <- daten[format(as.Date(daten$datetime), "%m") %in% c("07", "08"), ]
+  
+  # Extract metadata
+  alle_tage <- unique(as.Date(daten_summer$datetime))
+  station_id <- unique(daten_summer$cd_station)
+  zmax <- df$depth_m[df$cd_station == station_id]
+  alt <- df$Altitude_m[df$cd_station == station_id]
+  lat <- df$latitude[df$cd_station == station_id]
+  
+  #do columns
+  do_cols <- grep("^DO_mgl_d[0-9.]+$", names(daten_summer), value = TRUE)
+  depths2 <- as.numeric(gsub("DO_mgl_d", "", do_cols))
+  max_depth_do <- do_cols[which.max(depths2)]
+  
+  # Days with DO data
+  df_daily_mean <- daten_summer %>%
+    mutate(date = as.Date(datetime)) %>%
+    group_by(date) %>%
+    summarise(mean_value = mean(.data[[max_depth_do]], na.rm = TRUE)) %>%
+    filter(!is.na(mean_value))
+  
+  day_to_select <- df_daily_mean$date
+  
+  # Step 2: Daily metabolism
+  alle_metab <- list()
+  
+  for (j in 1:length(day_to_select)) {
+    tag_date <- as.Date(day_to_select[j])
+    daten_tag <- daten_summer[as.Date(daten_summer$datetime) == tag_date, ]
+    
+    df_hourly <- daten_tag %>%
+      mutate(hour = floor_date(datetime, unit = "hour")) %>%
+      group_by(hour) %>%
+      summarise(across(where(is.numeric), ~ mean(.x, na.rm = TRUE)))
+    
+    # Temperature columns
+    tmp_cols <- grep("^TmpWtr_degC_d", names(df_hourly), value = TRUE)
+    tmp_cols_no_na <- tmp_cols[!sapply(df_hourly[, tmp_cols], function(x) any(is.na(x)))]
+    df_tmp_clean <- df_hourly[, tmp_cols_no_na]
+    
+    temp_str_clean <- colMeans(df_tmp_clean, na.rm = TRUE)
+    temp_spalten <- grep("^TmpWtr_degC_d[0-9.]+$", names(temp_str_clean), value = TRUE)
+    depths_clean <- as.numeric(gsub("TmpWtr_degC_d", "", temp_spalten))
+    temp_str_ordered <- temp_str_clean[order(depths_clean)]
+    depth_ordered <- sort(depths_clean)
+    
+    if (length(temp_str_ordered) < 2) next
+    
+    m.d <- meta.depths(as.vector(temp_str_ordered), depth_ordered, slope = 0.1, seasonal = FALSE)
+    if (any(is.na(m.d))) next
+    
+    z.mix <- mean(m.d)
+    
+    # Deepest DO sensor
+    do_cols <- grep("^DO_mgl_d[0-9.]+$", names(df_hourly), value = TRUE)
+    depths2 <- as.numeric(gsub("DO_mgl_d", "", do_cols))
+    max_depth_do <- do_cols[which.max(depths2)]
+    
+    # Handle NaN
+    do <- df_hourly[[max_depth_do]]
+    do_mean <- mean(do[!is.nan(do)], na.rm = TRUE)
+    do[is.nan(do)] <- do_mean
+    
+    temp <- df_hourly[[temp_spalten[length(temp_spalten)]]]
+    temp_mean <- mean(temp[!is.nan(temp)], na.rm = TRUE)
+    temp[is.nan(temp)] <- temp_mean
+    
+    doobs <- data.frame(datetime = df_hourly$hour, do = do)
+    wtr <- data.frame(datetime = df_hourly$hour, temp = temp)
+    wnd <- data.frame(datetime = df_hourly$hour, wnd = rep(3, nrow(df_hourly)))
+    
+    k.gas <- ifelse(z.mix < zmax, 0, k600.2.kGAS.base(k.cole.base(wnd$wnd), wtr$temp, gas = "O2"))
+    do.sat <- o2.at.sat.base(wtr$temp, altitude = alt)
+    irr <- as.integer(is.day(doobs$datetime, lat))
+    
+    metab <- metab.bookkeep(do.obs = doobs$do, do.sat, k.gas, z.mix, irr, datetime = doobs$datetime)
+    if (is.null(metab)) next
+    
+    metab$datetime <- as.POSIXct(tag_date, tz = "UTC")
+    metab$cd_station <- station_id
+    
+    alle_metab[[as.character(tag_date)]] <- data.frame(metab, zmix = z.mix, kgas = k.gas)
+  }
+  
+  # Combine / reformat output
+  metab_export <- as.data.frame(do.call(rbind, alle_metab))
+  metab_export$datetime <- as.POSIXct(as.numeric(metab_export$datetime), origin = "1970-01-01", tz = "UTC")
+  metab_export$DOY <- as.numeric(format(metab_export$datetime, "%j"))
+  metab_export$year <- as.numeric(format(metab_export$datetime, "%Y"))
+  metab_results_list[[i]] <- metab_export
+}
+
+# ----------------------------------------------------------
+# Save intermediate results as CSVs in output folder just to check
+for (i in seq_along(metab_results_list)) {
+  metab_export <- metab_results_list[[i]]
+  
+  # Check if dataframe exists and is non-empty
+  if (is.null(metab_export) || !is.data.frame(metab_export) || nrow(metab_export) == 0) next
+  
+  file_name <- paste0("metab_", basename(data[files_to_select[i]]))
+  file_path <- file.path(output_folder, file_name)
+  write.csv(metab_export, file = file_path, row.names = FALSE)
+}
+
+
+
+###then last part:
+# Wavelet
+
+days_with_diel_DO_changes_per_dataset <- list()
+
+for (i in files_to_select) {
+  daten <- read.csv(data[i])
+  
+  if("date_time" %in% names(daten)){
+    daten$datetime <- as.POSIXct(daten$date_time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  } else if(all(c("dt_ana","hr_ana") %in% names(daten))){
+    daten$datetime <- as.POSIXct(paste(daten$dt_ana, daten$hr_ana), 
+                                 format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  } else {
+    stop("mistake in timedate ", basename(data[i]))
+  }
+  
+  #July and August again only
+  daten_summer <- daten[format(as.Date(daten$datetime), "%m") %in% c("07", "08"), ]
+  year <- unique(format(daten_summer$datetime, "%Y")) 
+  cd_station <- unique(daten_summer$cd_station) # get the station id
+  
+  #DO columns
+  do_cols <- grep("^DO_mgl_d[0-9.]+$", names(daten_summer), value = TRUE)
+  depths2 <- as.numeric(gsub("DO_mgl_d", "", do_cols))
+  max_depth_do <- do_cols[which.max(depths2)]
+  
+  # extract the year from the data
+  ## Compute the power spectrum of the DO data
+  df_wav <- data.frame(datetime = daten_summer$datetime, DO = daten_summer[[max_depth_do]]) %>%
+    filter(!is.na(DO)) %>%
+    mutate(DO = as.numeric(DO)) 
+  
+  wt_result <- analyze.wavelet(df_wav, 
+                               my.series = "DO",
+                               loess.span = 0.5, 
+                               dt = 1/24,
+                               dj = 1/4, 
+                               make.pval = TRUE, n.sim = 10,
+                               date.format = "%F %T", date.tz = "UTC")
+  
+  ## detect dates with a signal period of 1 day
+  period <- which(trunc(wt_result$Period) == 1)[1] 
+  
+  ### make a df with datetimes and the p-value of the power spectrum for a period of 1 day
+  power_df <- data.frame(Date_Doy = as.numeric(format(df_wav$datetime, "%j")),
+                         power = wt_result$Power.pval[period,]) 
+  
+  ### calculate the mean power for each day of the year
+  meanpower <- aggregate(power_df$power, by = list(power_df$Date_Doy), FUN = mean) %>%
+    rename(DOY = Group.1, Mean_Power = x)
+  
+  ### add the wavelet significance on the metab_export data frame
+  result_wavelet <- data.frame( 
+    year = rep(year, nrow(meanpower)),
+    cd_station = rep(cd_station, nrow(meanpower)),
+    Mean_Power = meanpower$Mean_Power,
+    DOY = meanpower$DOY) %>%
+    mutate(diel_signal = ifelse(Mean_Power <= 0.05, 1, 0))
+  
+  ### Match with metab_results_list and update
+  for (candidate in metab_results_list) {
+    if (is.null(candidate)) next
+    if (length(candidate$cd_station) == 0) next
+    if (candidate$cd_station[1] != cd_station) next
+    if (candidate$year[1] != year) next
+    break
+  }
+  
+  k <- 1
+  for (j in 1:nrow(meanpower)) {
+    if(is.na(candidate$DOY[k])) break
+    if (candidate$DOY[k] != meanpower$DOY[j]) next
+    mp <- meanpower$Mean_Power[j]
+    candidate$Mean_Power[k] <- mp
+    candidate$diel_signal[k] <- ifelse(mp <= 0.05, 1, 0)
+    k <- k + 1
+  }
+  
+  # final step - saving the results in a list
+  days_with_diel_DO_changes_per_dataset[[i]] <- candidate 
+}
+
+# Save the results list for later use
+save(days_with_diel_DO_changes_per_dataset, 
+     file = "days_with_diel_DO_changes_per_dataset.RData")
+
+
+
+
+#theoretically there should be all the data now in days with diel Do changes per dataset
+#so i guess check how it looks
+head(days_with_diel_DO_changes_per_dataset[[1]])
+lapply(days_with_diel_DO_changes_per_dataset, head)
+
+#it does look like the ones hat it did model are all there
+#so issue one: not a lot of df came through
+#so let's make this model_df i guess and then add other parameters to make a full_df
+
+
+model_df <- data.frame(
+  year = numeric(),
+  cd_station = character(),
+  mean_NEP = numeric(),
+  mean_GPP = numeric(),
+  mean_R = numeric(),
+  sum_diel_signal = numeric(),
+  kgas = numeric(),
+  zmix = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (df in days_with_diel_DO_changes_per_dataset) {
+  if (!is.null(df) && is.data.frame(df) && nrow(df) > 0 &&
+      all(c("NEP", "GPP", "R", "diel_signal", "year", "cd_station", "kgas", "zmix") %in% names(df))) {
+    
+    # days with diel_signal = 1
+    df_diel <- df[df$diel_signal == 1, ]
+    
+    neue_zeile <- data.frame(
+      year = unique(df$year),
+      cd_station = unique(df$cd_station),
+      mean_NEP = ifelse(nrow(df_diel) > 0, mean(df_diel$NEP, na.rm = TRUE), NA),
+      mean_GPP = ifelse(nrow(df_diel) > 0, mean(df_diel$GPP, na.rm = TRUE), NA),
+      mean_R   = ifelse(nrow(df_diel) > 0, mean(df_diel$R, na.rm = TRUE), NA),
+      sum_diel_signal = sum(df$diel_signal, na.rm = TRUE),
+      kgas = mean(df$kgas, na.rm = TRUE),
+      zmix = mean(df$zmix, na.rm = TRUE),
+      stringsAsFactors = FALSE
+    )
+
+        model_df <- rbind(model_df, neue_zeile)
+  }
+}
+
+#check final model_df
+head(model_df)
+str(model_df)
+#looks okay from here so...
+write.csv(model_df, file = paste0(output_folder, "model_df.csv"), row.names = FALSE)
+
+
+
+#looks okay, try qc-ing it
+#maybe try plotting it:
+
+plot_output_folder <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/new_modeling/metab_plots"
+
+for (metab in days_with_diel_DO_changes_per_dataset) {
+  if (is.null(metab)) next
+  if (!("diel_signal" %in% colnames(metab))) {
+    message("no wavelet data for metabolism:\n", metab$cd_station[1])
+    next
+  }
+  
+  metab_long <- metab %>%
+    dplyr::select(cd_station, datetime, GPP, R, NEP, zmix, kgas, diel_signal) %>%
+    tidyr::pivot_longer(cols = c("GPP", "R", "NEP"),
+                        names_to = "Variable", values_to = "Value")
+  
+  metab_long$Value <- as.numeric(metab_long$Value)
+  
+  #plot
+  p <- ggplot(metab_long, aes(x = datetime, y = Value, color = Variable)) +
+    geom_line(linewidth = 1) +
+    labs(title = paste0("Metabolism for ", metab$cd_station[1], 
+                        " (", metab$year[1], ")"),
+         y = expression(paste("mg ", O[2], " L"^-1," d"^-1)), 
+         x = "Date") +
+    scale_color_manual(values = c("GPP" = "green", "R" = "red", "NEP" = "blue")) +
+    scale_x_datetime(date_labels = "%Y-%m-%d", date_breaks = "5 days") +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    # Punkte für Tage mit diel_signal == 1
+    geom_point(data = metab_long[metab_long$diel_signal == 1, ],
+               aes(x = datetime, 
+                   y = rep(0, nrow(metab_long[metab_long$diel_signal == 1, ]))), # Punkte auf y=0 Linie
+               color = "black", size = 3, shape = 21, fill = "yellow", stroke = 1)
+  
+  #Save them just in case
+  ggsave(
+    filename = paste0(plot_output_folder, "/", metab$cd_station[1], "_year_", metab$year[1], "_metabolism_plot.png"),
+    plot = p,
+    width = 10, height = 6, dpi = 300, bg = "white"
+  )
+}
+
+#looks good, should be fine
+
+
+
+
