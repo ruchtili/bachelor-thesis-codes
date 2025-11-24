@@ -1,0 +1,49 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        Seperate whole df into df per lake
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+setwd("C:/Users/linda/Documents/Bachelorarbeit")
+
+load("donnees_LS_20050707_20240905.RData")
+
+ls()
+View(dtls)
+
+getwd()
+
+names(dtls_v2025)
+head(dtls_v2025)
+unique(dt$cd_station)
+unique(dt$param_ana)
+unique(dtls_v2025$param_ana)
+
+
+
+#separation
+library(dplyr)
+library(ggplot2)
+
+dt_filtered <- dtls_v2025 %>%
+  filter(param_ana %in% c("DO_mgl", "TmpWtr_degC"))
+head(dt_filtered)
+
+dtls_v2025 %>%
+  filter(param_ana == "DO_mgl", depth_m >= 8) %>%
+  summary(res_ana)
+
+unique_seens <- unique(dtls_v2025$cd_station)
+head(unique_seens)
+
+num_seens <- length(unique_seens)
+print(num_seens)
+print(unique_seens)
+
+seens <- split(dtls_v2025, dtls_v2025$cd_station)
+for (see in names(seens)) {
+  write.csv(seens[[see]], paste0(see, "_data.csv"), row.names = FALSE)
+}
+
+#worked, 24 individual dfs
