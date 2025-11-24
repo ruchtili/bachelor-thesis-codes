@@ -1,0 +1,49 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        change data from long to broad format
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+
+input_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_clear_data_per_lake/cleraed"
+output_folder <- "C:/Users/linda/Documents/Bachelorarbeit/B_broad_data_per_lake"
+
+dateien <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+
+for (datei in dateien) {
+  
+  df <- read_csv(datei, show_col_types = FALSE)
+    df <- df %>%
+    mutate(param_depth = paste0(param_ana, "_d", depth_m))
+  
+  df_breit <- df %>%
+    select(cd_station, dt_ana, hr_ana, qualite, param_depth, res_ana) %>%
+    pivot_wider(names_from = param_depth, values_from = res_ana)
+  
+  df_breit <- df_breit %>%
+    mutate(
+      cd_station = as.character(cd_station),
+      dt_ana = as.character(dt_ana),
+      hr_ana = as.character(hr_ana)
+    )
+  
+  see_name <- str_extract(basename(datei), "^[A-Z0-9]+")
+  output_path <- file.path(output_folder, paste0(see_name, "_final.csv"))
+  
+  write.table(
+    df_breit,
+    file = output_path,
+    sep = ",",
+    row.names = FALSE,
+    col.names = TRUE,
+    quote = TRUE,
+    qmethod = "escape",
+    na = "NA"
+  )
+  }
+
