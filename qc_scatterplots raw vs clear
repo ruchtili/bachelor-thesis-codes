@@ -1,0 +1,60 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        QC: raw vs clear data
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+input_raw_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_data_per_lake/no_double_values"
+input_clean_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_clear_data_per_lake"
+output_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_clear_data_per_lake/quality_control"
+
+raw_files <- list.files(path = input_raw_folder, pattern = "*.csv", full.names = TRUE)
+clean_files <- list.files(path = input_clean_folder, pattern = "*.csv", full.names = TRUE)
+
+if (length(raw_files) != length(clean_files)) {
+  stop("mistake in amount of df raw and df clear")
+}
+
+for (i in seq_along(raw_files)) {
+  raw <- read.csv(raw_files[i])
+  clean <- read.csv(clean_files[i])
+  
+  if (nrow(raw) != nrow(clean)) {
+    message("different amount of lines: prob error before", basename(raw_files[i]), ", skipped.")
+    next
+  }
+  
+  merged <- raw %>%
+    select(cd_station, dt_ana, hr_ana, depth_m, param_ana, res_ana_raw = res_ana) %>%
+    bind_cols(clean %>% select(res_ana_clean = res_ana))
+  
+  # scatterplot of raw vs clar
+  make_scatter <- function(param_name) {
+    data <- merged %>% filter(param_ana == param_name)
+    ggplot(data, aes(x = res_ana_raw, y = res_ana_clean)) +
+      geom_point(alpha = 0.3, size = 0.2, color = "blue") +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+      labs(
+        title = param_name,
+        x = "Raw",
+        y = "Clean"
+      ) +
+      theme_minimal()
+  }
+  
+  p1 <- make_scatter("TmpWtr_degC")
+  p2 <- make_scatter("DO_mgl")
+  p3 <- make_scatter("DO_sat")
+
+  #save  
+  plot_title <- tools::file_path_sans_ext(basename(clean_files[i]))
+  plot_file <- paste0(output_folder, "/", plot_title, "_scatterplots.png")
+  
+  g <- grid.arrange(p1, p2, p3, ncol = 3, top = plot_title)
+  ggsave(plot_file, plot = g, width = 12, height = 4, dpi = 300)
+}
