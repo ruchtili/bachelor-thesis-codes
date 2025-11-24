@@ -1,0 +1,214 @@
+# ----------------------------------------------------------
+# Script Name:    PCA_final.R
+# Purpose:        Perform PCA with scree plot, rotation table,
+#                 and combined biplot (Typology colors + KMeans)
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(ggplot2)
+library(ggrepel)
+library(grid)
+library(dplyr)
+library(corrplot)
+
+df <- read.csv("C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv")
+vars <- c("mean_NEP", "mean_R", "mean_GPP", "summer_surface_temp", "depth", "DO_mean", "zmix_rel", "secchi_rel", "catchment_size", "lake_size", "chlorophyll_mean", "altitude")
+
+pca_data <- df[, vars]
+pca_data_clean <- na.omit(pca_data)
+df_clean <- df[complete.cases(pca_data), ]
+
+# PCA:
+pca <- prcomp(pca_data_clean, scale = TRUE)
+
+pca.var <- pca$sdev^2
+pca.var.per <- round(pca.var / sum(pca.var) * 100, 1)
+
+# Scree Plot
+scree_data <- data.frame(
+  PC = 1:length(pca.var.per),
+  Var = pca.var.per
+)
+
+ggplot(scree_data, aes(x = PC, y = Var)) +
+  geom_col() +
+  geom_text(aes(label = round(Var, 1)), vjust = -0.6, size = 4) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0, face = "plain", size=16),  # left aligned, not bold
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Scree plot",
+    x = "Principal component",
+    y = "Variance explained (%)"
+  )
+
+# show Loadings
+cat("\n--- PCA Rotation (Loadings) ---\n")
+print(round(pca$rotation, 3))
+
+# show Heatmap
+cor_matrix <- cor(pca_data_clean, use = "complete.obs")
+corrplot(cor_matrix, method = "color", type = "upper",
+         tl.cex = 0.8, tl.col = "black", title = "Correlation Matrix")
+
+# finally: PCA with Typology + KMeans
+# -------------------------------
+set.seed(42)
+kmeans_result <- kmeans(pca$x[, 1:2], centers = 3)
+
+pca.df <- data.frame(
+  PC1 = pca$x[, 1],
+  PC2 = pca$x[, 2],
+  Label = paste(df_clean$name, df_clean$year, sep = "_"),
+  Typology = as.factor(df_clean$typology),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+# Biplot mit Typology + Clustern
+loadings <- data.frame(pca$rotation[, 1:2])
+loadings$Variable <- rownames(loadings)
+scale_factor <- 3  
+
+cols <- c("1" = "#A8E6A1", "2" = "steelblue", "3" = "#fc8d62")
+
+ggplot(pca.df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Typology), size = 3) +
+  
+  ggrepel::geom_text_repel(
+    aes(label = Label, color = Typology),
+    size = 3,
+    show.legend = FALSE,
+    max.overlaps = Inf,
+    segment.size = 0.5
+  ) +
+  
+  stat_ellipse(aes(group = Cluster), linetype = 2, size = 0.8, color = "grey40") +
+  
+  geom_segment(
+    data = loadings,
+    aes(x = 0, y = 0, xend = PC1 * scale_factor, yend = PC2 * scale_factor),
+    inherit.aes = FALSE,
+    arrow = arrow(length = unit(0.2, "cm")),
+    color = "black"
+  ) +
+  
+  geom_text(
+    data = loadings,
+    aes(x = PC1 * scale_factor, y = PC2 * scale_factor, label = Variable),
+    inherit.aes = FALSE,
+    color = "black",
+    vjust = -0.5,
+    size = 3
+  ) +
+  
+  xlab(paste("PC1 -", pca.var.per[1], "%")) +
+  ylab(paste("PC2 -", pca.var.per[2], "%")) +
+  scale_color_manual(values = cols) +
+  theme_bw() +
+  ggtitle("Principal Component Analysis: Typology") +
+  theme(
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+
+
+
+
+
+
+
+####irrelevant
+
+#### for dynamics analysis later:
+
+# ----------------------------------------------------------
+# Script Name:    PCA_final_by_lake.R
+# Purpose:        PCA + KMeans + Biplot, Punkte nach Seen farbig
+# Author:         Linda Ruchti
+# Date:           2025-10-19
+# ----------------------------------------------------------
+
+library(ggplot2)
+library(ggrepel)
+library(grid)
+library(dplyr)
+library(colorspace)
+
+df <- read.csv("C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv")
+vars <- c("mean_NEP", "summer_surface_temp", "depth", "DO_mean", "zmix_rel", "secchi_rel")
+
+pca_data <- df[, vars]
+pca_data_clean <- na.omit(pca_data)
+df_clean <- df[complete.cases(pca_data), ]
+
+pca <- prcomp(pca_data_clean, scale = TRUE)
+
+pca.var <- pca$sdev^2
+pca.var.per <- round(pca.var / sum(pca.var) * 100, 1)
+
+set.seed(42)
+kmeans_result <- kmeans(pca$x[, 1:2], centers = 3)
+
+unique_lakes <- unique(df_clean$name)
+n_lakes <- length(unique_lakes)
+cols_lakes <- qualitative_hcl(n_lakes, palette = "Dark 3")
+names(cols_lakes) <- unique_lakes
+
+pca.df <- data.frame(
+  PC1 = pca$x[, 1],
+  PC2 = pca$x[, 2],
+  Label = paste(df_clean$name, df_clean$year, sep = "_"),
+  Lake = df_clean$name,
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+loadings <- data.frame(pca$rotation[, 1:2])
+loadings$Variable <- rownames(loadings)
+scale_factor <- 3
+
+ggplot(pca.df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = Lake), size = 3) +
+
+  ggrepel::geom_text_repel(
+    aes(label = Label, color = Lake),
+    size = 3,
+    show.legend = FALSE,
+    max.overlaps = Inf,
+    segment.size = 0.5
+  ) +
+  
+  stat_ellipse(aes(group = Cluster), linetype = 2, size = 0.8, color = "grey40") +
+  
+  geom_segment(
+    data = loadings,
+    aes(x = 0, y = 0, xend = PC1 * scale_factor, yend = PC2 * scale_factor),
+    inherit.aes = FALSE,
+    arrow = arrow(length = unit(0.2, "cm")),
+    color = "black"
+  ) +
+  geom_text(
+    data = loadings,
+    aes(x = PC1 * scale_factor, y = PC2 * scale_factor, label = Variable),
+    inherit.aes = FALSE,
+    color = "black",
+    vjust = -0.5,
+    size = 3
+  ) +
+  
+  xlab(paste("PC1 -", pca.var.per[1], "%")) +
+  ylab(paste("PC2 -", pca.var.per[2], "%")) +
+  
+  scale_color_manual(values = cols_lakes) +
+  
+  theme_bw() +
+  theme(
+    legend.position = "none", 
+    plot.title = element_text(hjust = 0)  
+  ) +
+  ggtitle("Principal Component Analysis: Lakes")
