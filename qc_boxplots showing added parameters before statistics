@@ -1,0 +1,34 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        QC: boxplots for all added parameters befroe statistical testing (classic theme this time!)
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+  
+library(ggplot2)
+path_complete <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv"
+df <- read.csv(path_complete, stringsAsFactors = FALSE)
+output_dir <- dirname(path_complete)
+
+for (v in names(df)) {
+  if (is.numeric(df[[v]])) {
+    
+        p <- ggplot(df, aes(x = "", y = df[[v]])) +
+      geom_boxplot(width = 0.4, outlier.size = 1.5) +
+      labs(
+        x = NULL,
+        y = v
+      ) +
+      theme_classic(base_size = 16) +
+      theme(
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y  = element_text(size = 16),
+        axis.title.y = element_text(size = 18)
+      )
+    
+    file_name <- paste0("boxplot_", v, ".png")
+    file_path <- file.path(output_dir, file_name)
+    ggsave(file_path, plot = p, width = 6, height = 5, dpi = 300)
+  }
+}
