@@ -1,0 +1,34 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        clear extreme values (TmpWtr_degC <35, DO_sat 0-200, DO_mgl 0-20)
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(dplyr)
+
+input_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_data_per_lake/no_more_double_values"
+output_folder <- "C:/Users/linda/Documents/Bachelorarbeit/A_raw_clear_data_per_lake"
+
+file_list <- list.files(path = input_folder, pattern = "*.csv", full.names = TRUE)
+
+#go through all lakes
+for (file in file_list) {
+  lake <- read.csv(file)
+  
+  lake_clear <- lake %>%
+    mutate(
+      res_ana = case_when(
+        param_ana == "TmpWtr_degC" & res_ana > 35 ~ NA_real_,
+        param_ana == "DO_mgl" & (res_ana < 0 | res_ana > 20) ~ NA_real_,
+        param_ana == "DO_sat" & (res_ana < 0 | res_ana > 200) ~ NA_real_,
+        TRUE ~ res_ana
+      )
+    )
+  
+  output_file <- paste0(output_folder, "/", tools::file_path_sans_ext(basename(file)), "_clear.csv")
+  write.csv(lake_clear, output_file, row.names = FALSE)
+
+}
+
+
