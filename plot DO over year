@@ -1,0 +1,77 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        QC plotting of DO conc per year, classic style
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+
+input_dir <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/new_per_lake_per_year"
+output_dir <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/attachments/doplots"
+
+files <- list.files(input_dir, pattern = "\\.csv$", full.names = TRUE)
+
+for (f in files) {
+  fname <- tools::file_path_sans_ext(basename(f))
+  df <- read.csv(f, stringsAsFactors = FALSE)
+  
+  if ("date_time" %in% names(df)) {
+    df$datetime <- as.POSIXct(df$date_time, format = "%Y-%m-%d %H:%M:%S")
+  } else {
+    df$datetime <- as.POSIXct(paste(df$dt_ana, df$hr_ana), format = "%Y-%m-%d %H:%M:%S")
+  }
+  
+  # find all depths
+  do_cols <- grep("^DO_mgl", names(df), value = TRUE)
+  if (length(do_cols) == 0) next
+  
+  # Long format
+  df_long <- df %>%
+    select(datetime, all_of(do_cols)) %>%
+    pivot_longer(cols = all_of(do_cols),
+                 names_to = "depth",
+                 values_to = "DO_conc") %>%
+    mutate(depth = gsub("DO_mgl_d", "Depth ", depth))
+  
+  depth_levels <- unique(df_long$depth)
+  blue_colors <- colorRampPalette(c("lightblue", "darkblue"))(length(depth_levels))
+  
+  # make full year this time!
+  year_min <- as.Date(paste0(year(min(df_long$datetime, na.rm = TRUE)), "-01-01"))
+  year_max <- as.Date(paste0(year(max(df_long$datetime, na.rm = TRUE)), "-12-31"))
+  
+  # Plot
+  p <- ggplot(df_long, aes(x = datetime, y = DO_conc, color = depth)) +
+    geom_line(na.rm = TRUE, linewidth = 0.8) +
+    scale_color_manual(values = blue_colors) +
+    scale_x_datetime(limits = c(as.POSIXct(year_min), as.POSIXct(year_max)),
+                     date_labels = "%b",  # Month labels (Jan, Feb, ...)
+                     date_breaks = "1 month") +
+    theme_classic(base_size = 16) +
+    theme(
+      axis.text = element_text(size = 14),
+      axis.title = element_text(size = 16, face = "bold"),
+      legend.title = element_text(size = 14, face = "bold"),
+      legend.text = element_text(size = 12),
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      axis.line = element_line(size = 0.8),
+      legend.position = "right"
+    ) +
+    labs(
+      title = paste("DO Concentration –", fname),
+      x = "Time (Month)",
+      y = "DO [mg/L]",
+      color = "Depth"
+    )
+  
+  # Save
+  ggsave(
+    filename = file.path(output_dir, paste0(fname, "_DO_plot.png")),
+    plot = p,
+    width = 12, height = 6, dpi = 300, bg = "white"
+  )
+}
