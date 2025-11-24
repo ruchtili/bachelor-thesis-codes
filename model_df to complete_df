@@ -1,0 +1,230 @@
+
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        Add chlorophyll, watershed area, ... to model_df to make final_df
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+path <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/"
+model_df <- read.csv(paste0(path, "model_df.csv"), stringsAsFactors = FALSE)
+
+model_df$catchment_size     <- NA_real_
+model_df$altitude           <- NA_real_
+model_df$secchi_depth       <- NA_real_
+model_df$chlorophyll_mean   <- NA_real_
+model_df$summer_surface_temp<- NA_real_
+model_df$name               <- as.character(NA)
+model_df$lake_size          <- NA_real_
+model_df$depth              <- NA_real_
+model_df$days_hypoxic       <- NA_real_
+model_df$days_anoxic        <- NA_real_
+model_df$DO_mean            <- NA_real_
+model_df$typology           <- 999
+
+# Add altitude, catchment_area etc. from overview file
+library(readxl)
+overview_lakes <- read_excel("C:/Users/linda/Documents/Bachelorarbeit/overview_lakes.xlsx")
+
+model_df$cd_station <- as.character(model_df$cd_station)
+overview_lakes$cd_station <- as.character(overview_lakes$cd_station)
+
+model_df$catchment_size <- overview_lakes$watershed_area_km2[match(model_df$cd_station, overview_lakes$cd_station)]
+model_df$altitude       <- overview_lakes$Altitude_m[match(model_df$cd_station, overview_lakes$cd_station)]
+model_df$name           <- overview_lakes$name[match(model_df$cd_station, overview_lakes$cd_station)]
+model_df$lake_size      <- overview_lakes$lake_area_km2[match(model_df$cd_station, overview_lakes$cd_station)]
+model_df$depth          <- overview_lakes$depth_m[match(model_df$cd_station, overview_lakes$cd_station)]
+
+
+
+# Secchi depth
+library(dplyr)
+
+path_secchi <- "C:/Users/linda/Documents/Bachelorarbeit/A1_Getting data/PCA_data/extraction_production_primaire_chlorophylle_et_transparence_18-07-2025-16-55-50-539"
+secchi_files <- list.files(path_secchi, pattern = "_transparence_.*\\.csv$", full.names = TRUE)
+secchi_files <- secchi_files[!grepl("aggregated_transparence", secchi_files)]
+
+read_secchi <- function(file) {
+  df <- read.csv2(file, stringsAsFactors = FALSE)
+  df %>%
+    select(site.name = 2, sampling.date = 4, secchi = 6) %>% 
+    mutate(
+      year = as.numeric(format(as.Date(sampling.date, format = "%d/%m/%Y"), "%Y")),
+      secchi = as.numeric(secchi)
+    ) %>%
+    filter(!is.na(secchi))  
+}
+
+secchi_data <- bind_rows(lapply(secchi_files, read_secchi))
+
+secchi_summary <- secchi_data %>%
+  group_by(site.name, year) %>%
+  summarise(secchi_mean = mean(secchi), .groups = "drop")
+
+model_df <- model_df %>%
+  left_join(secchi_summary, by = c("name" = "site.name", "year" = "year")) %>%
+  mutate(secchi_depth = coalesce(secchi_mean, secchi_depth)) %>%
+  select(-secchi_mean)
+
+
+
+
+# Chlorophyll
+path_chla <- "C:/Users/linda/Documents/Bachelorarbeit/A1_Getting data/PCA_data/extraction_production_primaire_chlorophylle_et_transparence_18-07-2025-16-55-50-539"
+chla_files <- list.files(path_chla, pattern = "_mean_.*\\.csv$", full.names = TRUE)
+
+read_chla <- function(file) {
+  df <- read.csv2(file, stringsAsFactors = FALSE, fileEncoding = "latin1")
+  df %>%
+    select(site.name = 2, sampling.date = 4, chla_strickland = 7, chla_unesco = 8) %>%
+    mutate(
+      chla_strickland = as.numeric(na_if(chla_strickland, "null")),
+      chla_unesco = as.numeric(na_if(chla_unesco, "null")),
+      year = as.numeric(format(as.Date(sampling.date, format = "%d/%m/%Y"), "%Y")),
+      chla_mean = rowMeans(cbind(chla_strickland, chla_unesco), na.rm = TRUE)
+    ) %>%
+    filter(!is.na(chla_mean))
+}
+
+chla_data <- bind_rows(lapply(chla_files, read_chla))
+
+chla_summary <- chla_data %>%
+  group_by(site.name, year) %>%
+  summarise(chla_mean_final = mean(chla_mean, na.rm = TRUE), .groups = "drop")
+
+model_df <- model_df %>%
+  left_join(chla_summary, by = c("name" = "site.name", "year" = "year")) %>%
+  mutate(chlorophyll_mean = coalesce(chla_mean_final, chlorophyll_mean)) %>%
+  select(-chla_mean_final)
+
+
+
+
+# Summer surface temperature
+path_temp_do <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/new_per_lake_per_year"
+temp_do_files <- list.files(path_temp_do, pattern = "\\.csv$", full.names = TRUE)
+
+read_temp_file <- function(file) {
+  df <- tryCatch(read.csv(file, stringsAsFactors = FALSE), error = function(e) return(NULL))
+  if (is.null(df)) return(NULL)
+  
+  temp_cols <- grep("^TmpWtr_degC_d\\d+$", names(df), value = TRUE)
+  if (length(temp_cols) == 0) return(NULL)
+  depths <- as.numeric(sub("TmpWtr_degC_d", "", temp_cols))
+  surface_col <- temp_cols[which.min(depths)]
+  
+  df$dt_ana <- as.POSIXct(df$date_time, format="%Y-%m-%d %H:%M:%S")
+  yr <- unique(year(df$dt_ana))
+  df$day <- as.Date(df$dt_ana)
+  
+  df_summer <- df %>%
+    filter(day >= as.Date(paste0(yr, "-07-01")) &
+             day <= as.Date(paste0(yr, "-08-31")))
+  
+  summer_mean <- mean(df_summer[[surface_col]], na.rm = TRUE)
+  
+  return(data.frame(cd_station = unique(df$cd_station),
+                    year = yr,
+                    summer_surface_temp = ifelse(is.nan(summer_mean), NA, summer_mean)))
+}
+
+summer_temp_all <- bind_rows(lapply(temp_do_files, read_temp_file))
+
+model_df <- model_df %>%
+  left_join(summer_temp_all, by = c("cd_station", "year")) %>%
+  mutate(summer_surface_temp = coalesce(summer_surface_temp.y, summer_surface_temp.x)) %>%
+  select(-summer_surface_temp.x, -summer_surface_temp.y)
+
+
+#(deleted in final version)
+# Hypoxic und Anoxic days
+#read_do_file <- function(file) {
+#  df <- tryCatch(read.csv(file, stringsAsFactors = FALSE), error = function(e) return(NULL))
+#  if (is.null(df)) return(NULL)
+#  
+#  df$dt_ana <- as.POSIXct(df$date_time, format="%Y-%m-%d %H:%M:%S")
+#  yr <- unique(year(df$dt_ana))
+#  df$day <- as.Date(df$dt_ana)
+#  
+#  df_summer <- df %>%
+#    filter(day >= as.Date(paste0(yr, "-07-01")) &
+#             day <= as.Date(paste0(yr, "-08-31")))
+#  
+#  do_cols <- grep("^DO_mgl_d\\d+$", names(df_summer), value = TRUE)
+#  if (length(do_cols) == 0) return(NULL)
+#  depths <- as.numeric(sub("DO_mgl_d", "", do_cols))
+#  deep_col <- do_cols[which.max(depths)]
+#  
+#  daily_mean_do <- df_summer %>%
+#    group_by(day) %>%
+#    summarise(mean_do = mean(.data[[deep_col]], na.rm = TRUE), .groups = "drop") %>%
+#    filter(!is.na(mean_do))
+#  
+#  days_hypoxic <- sum(daily_mean_do$mean_do < 4, na.rm = TRUE)
+#  days_anoxic  <- sum(daily_mean_do$mean_do < 0.5, na.rm = TRUE)
+#  
+#  return(data.frame(cd_station = unique(df$cd_station),
+#                    year = yr,
+#                    days_hypoxic = ifelse(length(days_hypoxic) == 0, NA, days_hypoxic),
+#                    days_anoxic  = ifelse(length(days_anoxic) == 0, NA, days_anoxic)))
+#}
+#
+#do_data_all <- bind_rows(lapply(temp_do_files, read_do_file))
+#
+#model_df <- model_df %>%
+#  left_join(do_data_all, by = c("cd_station", "year")) %>%
+#  mutate(
+#    days_hypoxic = coalesce(days_hypoxic.y, days_hypoxic.x),
+#    days_anoxic  = coalesce(days_anoxic.y,  days_anoxic.x)
+#  ) %>%
+#  select(-days_hypoxic.x, -days_hypoxic.y, -days_anoxic.x, -days_anoxic.y)
+
+
+
+#Do mean
+
+read_do_mean <- function(file) {
+  df <- tryCatch(read.csv(file, stringsAsFactors = FALSE), error = function(e) return(NULL))
+  if (is.null(df)) return(NULL)
+  
+  df$dt_ana <- as.POSIXct(df$date_time, format="%Y-%m-%d %H:%M:%S")
+  yr <- unique(year(df$dt_ana))
+  df$day <- as.Date(df$dt_ana)
+  
+  df_summer <- df %>%
+    filter(day >= as.Date(paste0(yr, "-07-01")) &
+             day <= as.Date(paste0(yr, "-08-31")))
+  
+  do_cols <- grep("^DO_mgl_d\\d+$", names(df_summer), value = TRUE)
+  if (length(do_cols) == 0) return(NULL)
+  depths <- as.numeric(sub("DO_mgl_d", "", do_cols))
+  deep_col <- do_cols[which.max(depths)]
+  
+  daily_mean_do <- df_summer %>%
+    group_by(day) %>%
+    summarise(mean_DO = mean(.data[[deep_col]], na.rm = TRUE), .groups = "drop") %>%
+    filter(!is.na(mean_DO))
+  
+  summer_mean_DO <- mean(daily_mean_do$mean_DO, na.rm = TRUE)
+  
+  return(data.frame(cd_station = unique(df$cd_station),
+                    year = yr,
+                    DO_mean = ifelse(is.nan(summer_mean_DO), NA, summer_mean_DO)))
+}
+
+do_mean_all <- bind_rows(lapply(temp_do_files, read_do_mean))
+
+model_df <- model_df %>%
+  left_join(do_mean_all, by = c("cd_station", "year")) %>%
+  mutate(DO_mean = coalesce(DO_mean.y, DO_mean.x)) %>%
+  select(-DO_mean.x, -DO_mean.y)
+
+
+
+
+#Put it all together:
+
+output <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/"
+write.csv(model_df, file = paste0(output, "complete_experiment2_df.csv"), row.names = FALSE)
+
+head(model_df)
