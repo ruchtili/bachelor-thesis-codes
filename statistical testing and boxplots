@@ -1,0 +1,156 @@
+
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        boxplots of parameters per typology
+#                 after that: shapiro wilk, jruskal wallis, dunns, boxplots to visualize
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(ggplot2)
+library(dplyr)
+
+path <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv"
+df <- read.csv(path, stringsAsFactors = FALSE)
+
+# throw out text variables
+exclude_vars <- c("name", "cd_station")
+vars <- setdiff(names(df), exclude_vars)
+
+df$typology <- as.factor(df$typology)
+
+output_dir <- dirname(path)
+
+make_boxplot <- function(df, var) {
+  ggplot(df, aes(x = typology, y = .data[[var]])) +
+    geom_boxplot(fill = "white", color = "black") +
+    labs(x = "Typology", y = var) +
+    theme_classic(base_size = 16) +
+    theme(
+      axis.text.x = element_text(size = 14),
+      axis.title.y = element_text(size = 16)
+    )
+}
+
+for (v in vars) {
+  if (is.numeric(df[[v]])) {
+    p <- make_boxplot(df, v)
+    
+    file_name <- paste0("boxplot_", v, ".png")
+    file_path <- file.path(output_dir, file_name)
+    ggsave(file_path, plot = p, width = 6, height = 5, dpi = 300)
+  }
+}
+
+
+
+
+## Statistics:
+
+#Shapiro Wilk (test normal distrib)
+library(dplyr)
+
+path <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv"
+df <- read.csv(path, stringsAsFactors = FALSE)
+
+df <- df %>%
+  filter(typology != 999) %>%
+  mutate(typology = factor(typology))
+
+exclude_vars <- c("name", "cd_station", "year", "typology")
+num_vars <- setdiff(names(df), exclude_vars)
+num_vars <- num_vars[sapply(df[num_vars], is.numeric)]
+
+# test
+for (param in num_vars) {
+  cat("\n=== Parameter:", param, "===\n")
+  
+  for (ty in unique(df$typology)) {
+    vals <- df %>% filter(typology == ty) %>% pull(param)
+    
+    if(length(vals) < 3) {
+      cat("Typology", ty, "-> not enough values\n")
+      next
+    }
+    
+    tryCatch({
+      test <- shapiro.test(vals)
+      p_val <- test$p.value
+
+      p_text <- ifelse(p_val < 1e-5, "<0.00001", formatC(p_val, format="f", digits=5))
+      
+      if(p_val >= 0.05) {
+        cat("Typology", ty, "-> normal distrib. (p =", p_text, ")\n")
+      } else {
+        cat("Typology", ty, "-> not normal distrib. (p =", p_text, ")\n")
+      }
+    }, error = function(e) {
+      cat("Typology", ty, "-> error\n")
+    })
+  }
+}
+
+#since not all normal distributed: K-W test
+
+# Kruskal-Wallis + Dunn’s Tests + Boxplots per variable
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(rstatix)
+path <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv"
+df <- read.csv(path, stringsAsFactors = FALSE)
+
+df <- df %>%
+  filter(typology != 999) %>%
+  mutate(typology = factor(typology))
+
+vars_to_test <- c("mean_NEP", "summer_surface_temp", "depth",
+                  "DO_mean", "zmix_rel", "secchi_rel")     ####also add otehr ones here just to be save
+cols <- c("1" = "#A8E6A1", "2" = "steelblue", "3" = "#fc8d62")
+
+output_dir <- dirname(path)
+cat("\nK-W + Dunns\n")
+
+# do that for all
+for (param in vars_to_test) {
+  cat("\n-------------------------\n")
+  cat("Variable:", param, "\n")
+  
+  # KW test
+  kw <- kruskal.test(df[[param]] ~ df$typology)
+  cat("Kruskal-Wallis p =", formatC(kw$p.value, digits = 5), "\n")
+  
+  # if significant: Dunns
+  posthoc <- df %>%
+    dunn_test(reformulate("typology", param), p.adjust.method = "bonferroni") %>%
+    add_xy_position(x = "typology")
+  
+  # visualize it in boxplots with letters
+  #letters doesn't work, visualize with stars acc. to significance
+  p <- ggplot(df, aes(x = typology, y = .data[[param]], fill = typology)) +
+    geom_boxplot(outlier.shape = 21, alpha = 0.8) +
+    scale_fill_manual(values = cols) +
+    theme_bw(base_size = 14) +
+    labs(title = paste("Distribution of", param),
+         subtitle = paste("Kruskal-Wallis p =", signif(kw$p.value, 3)),
+         x = "Typology", y = param) +
+    theme(legend.position = "none")
+  
+  p <- p + stat_pvalue_manual(
+    posthoc,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE
+  )
+  
+#show and save
+#looks okay
+  print(p)
+  ggsave(file.path(output_dir, paste0("boxplot_", param, "_with_stats.png")),
+         plot = p, width = 6, height = 5, dpi = 300)
+}
+
+
+
+
