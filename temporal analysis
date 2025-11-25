@@ -1,0 +1,74 @@
+# ----------------------------------------------------------
+# Script Name:    .R
+# Purpose:        temporal analysis
+# Author:         Linda Ruchti
+# Date:           2025
+# ----------------------------------------------------------
+
+library(tidyverse)
+path <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/final_rel_woNA.csv"
+df <- read_csv(path)
+
+df <- df %>%
+  mutate(typology = as.factor(typology))
+cols <- c(
+  "1" = "#A8E6A1",
+  "2" = "steelblue",
+  "3" = "#fc8d62",
+  "999" = "grey70"
+)
+
+exclude_vars <- c(
+  "cd_station","name","mean_R","mean_GPP","year","typology","depth","altitude","catchment_size","lake_size","days_anoxic","days_hypoxic","kgas","chlorophyll_mean","secchi_depth","zmix","sum_diel_signal")
+vars <- setdiff(names(df), exclude_vars)
+
+#describe axis (and figure out how to make ^numbers uff)
+param_labels <- c(
+  "DO_mean" = "DO mean (mg/L)",
+  "mean_NEP" = "mean NEP (mg O\u2082 L\u207B\u00B9 d\u207B\u00B9)",
+  "secchi_rel" = "Relative Secchi Depth (%)",
+  "summer_surface_temp" = "Summer Surface Temperature (°C)",
+  "zmix_rel" = "Relative Stratification Depth (%)"
+)
+
+output_dir <- "C:/Users/linda/Documents/Bachelorarbeit/C_New_try_splitting/final_analysis/final/temporal_analysis_final"
+
+unique_stations <- unique(df$cd_station)
+for(station in unique_stations) {
+  
+  df_station <- df %>% filter(cd_station == station)
+  lake_name <- unique(df_station$name)
+  
+  df_long <- df_station %>%
+    pivot_longer(
+      cols = all_of(vars),
+      names_to = "Parameter",
+      values_to = "Value"
+    )
+  
+  p <- ggplot(df_long, aes(x = year, y = Value)) +
+    geom_line(aes(group = Parameter), color = "grey50", size = 0.8) +
+    geom_point(aes(color = typology), size = 3) +
+    scale_color_manual(values = cols, name = "Typology") +
+    facet_wrap(~ Parameter, scales = "free_y", ncol = 2,
+               labeller = labeller(Parameter = param_labels)) +
+    labs(
+      x = NULL,
+      y = NULL,
+      color = "Typology",
+      title = paste0("Temporal Shifts in Lake ", lake_name)
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      strip.text = element_text(face = "plain"), 
+      plot.title = element_text(face = "plain", size = 16), 
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom",
+      panel.border = element_rect(color = "black", fill = NA, size = 0.6)
+    )
+  
+  ggsave(
+    file.path(output_dir, paste0("lake_dynamics_", station, ".png")),
+    p, width = 12, height = 8, dpi = 300
+  )
+}
