@@ -5,6 +5,7 @@ During the thesis data from Lac Sentinelles Network was used. Bottom oxygen was 
 In further analysis parameters relevant for distinguishing those typologies were investigated with statistical analysis.
 
 Workflow and Order of codes
+
 Data preparation:
 clear extreme values
 ->exterem values of raw data were deleted (O2 sat, O2 conc, Temp)
