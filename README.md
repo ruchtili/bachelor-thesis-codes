@@ -5,7 +5,7 @@ During the thesis data from Lac Sentinelles Network was used. Bottom oxygen was 
 In further analysis parameters relevant for distinguishing those typologies were investigated with statistical analysis.
 
 Workflow and Order of codes
-#Data preparation:
+Data preparation:
 clear extreme values
 ->exterem values of raw data were deleted (O2 sat, O2 conc, Temp)
 change data from long to broad format
@@ -15,7 +15,7 @@ qc_scatterplots raw vs clear
 plot DO over year
 ->for visual analysis and determining which lake belonged in which typology
 
-#Creating datafile for Analysis
+Creating datafile for Analysis
 modeling wavelet making model_df
 ->modleing metabolism values using LakeMetabolizer and checking with Wavelet Analysis
 model_df to complete_df
@@ -27,7 +27,7 @@ qc_boxplots showing added parameters before statistics
 separation of complete df
 ->
 
-#Analysis
+Analysis
 pca
 ->PCA of all lakes and all parameters
 statistical testing and boxplots
